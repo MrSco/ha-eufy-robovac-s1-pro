@@ -8,7 +8,7 @@ This custom integration enables control of the Eufy RoboVac S1 Pro through Home 
 
 ## Features
 
-- 🤖 Start/Stop/Pause cleaning
+- 🤖 Start/Pause/Resume cleaning
 - 🏠 Return to dock
 - 🔋 Battery level monitoring
 - 🗺️ Cleaning mode selection
@@ -58,7 +58,7 @@ You'll need the following information during setup:
 ## Supported Entities
 
 ### Vacuum
-- Basic vacuum functions (start, stop, pause, return to dock)
+- Basic vacuum functions (start, pause, resume, return to dock)
 
 ### Sensors
 - Battery level
