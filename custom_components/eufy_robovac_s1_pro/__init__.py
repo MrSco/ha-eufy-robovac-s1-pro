@@ -46,6 +46,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN][entry.entry_id].setdefault(CONF_DISCOVERED_DEVICES, {})
 
         detected_devices = await discover()
+        logger.debug("Detected devices on local network: %s", list(detected_devices.keys()))
 
         for home in homes:
             devices_for_home = await hass.async_add_executor_job(tuya_session.list_devices, home["groupId"])
@@ -55,6 +56,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
                 device_id = device["devId"]
                 local_key = device["localKey"]
+                
+                logger.debug("Looking for device_id '%s' in detected devices", device_id)
 
                 # Fix KeyError: use pop with default value None
                 discovered_device = detected_devices.pop(device_id, None)
@@ -95,9 +98,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         CONF_COORDINATOR: coordinator
                     }
                 else:
-                    logger.debug(
-                        "Could not find device %s on the local network, skipping",
+                    logger.warning(
+                        "Could not find device %s on the local network. "
+                        "Available devices: %s. Device may be offline or on a different network.",
                         device_id,
+                        list(detected_devices.keys()) if detected_devices else "none",
                     )
 
     except Exception:
