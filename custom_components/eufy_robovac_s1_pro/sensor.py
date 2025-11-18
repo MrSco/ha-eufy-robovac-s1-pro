@@ -284,6 +284,10 @@ class TotalCleaningCountSensor(CoordinatorTuyaDeviceUniqueIDMixin, CoordinatorEn
     _attr_icon = "mdi:counter"
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._last_valid_count = None  # 前回の有効な値を保持
+    
     @property
     def available(self) -> bool:
         """Return if entity is available."""
@@ -291,16 +295,35 @@ class TotalCleaningCountSensor(CoordinatorTuyaDeviceUniqueIDMixin, CoordinatorEn
     
     @property
     def native_value(self) -> int | None:
-        """Return the total cleaning count."""
+        """Return the total cleaning count.
+        
+        累積値なので、前回の値より小さい値は無視して前回の値を保持します。
+        """
         if not self.coordinator.data:
-            return None
+            return self._last_valid_count
         
         dps167 = self.coordinator.data.get("167", "")
         if not dps167:
-            return None
+            return self._last_valid_count
         
         stats = parse_dps167_statistics(dps167)
-        return stats.get("total_count")
+        new_count = stats.get("total_count")
+        
+        # 新しい値が取得できない場合は前回の値を返す
+        if new_count is None:
+            return self._last_valid_count
+        
+        # 初回または新しい値が前回の値以上の場合のみ更新
+        if self._last_valid_count is None or new_count >= self._last_valid_count:
+            self._last_valid_count = new_count
+            return new_count
+        else:
+            # 新しい値が前回より小さい場合は無視して前回の値を保持
+            _LOGGER.debug(
+                f"Total Cleaning Count: Ignoring decreased value {new_count} "
+                f"(previous: {self._last_valid_count})"
+            )
+            return self._last_valid_count
 
 
 class TotalCleaningAreaSensor(CoordinatorTuyaDeviceUniqueIDMixin, CoordinatorEntity, SensorEntity):
@@ -312,6 +335,10 @@ class TotalCleaningAreaSensor(CoordinatorTuyaDeviceUniqueIDMixin, CoordinatorEnt
     _attr_native_unit_of_measurement = "m²"
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._last_valid_area = None  # 前回の有効な値を保持
+    
     @property
     def available(self) -> bool:
         """Return if entity is available."""
@@ -319,16 +346,37 @@ class TotalCleaningAreaSensor(CoordinatorTuyaDeviceUniqueIDMixin, CoordinatorEnt
     
     @property
     def native_value(self) -> int | None:
-        """Return the total cleaning area in square meters."""
+        """Return the total cleaning area in square meters.
+        
+        累積値なので、前回の値より小さい値は無視して前回の値を保持します。
+        これにより、掃除開始直後に一時的に表示される誤った値（24m²など）を
+        フィルタリングできます。
+        """
         if not self.coordinator.data:
-            return None
+            return self._last_valid_area
         
         dps167 = self.coordinator.data.get("167", "")
         if not dps167:
-            return None
+            return self._last_valid_area
         
         stats = parse_dps167_statistics(dps167)
-        return stats.get("total_area")
+        new_area = stats.get("total_area")
+        
+        # 新しい値が取得できない場合は前回の値を返す
+        if new_area is None:
+            return self._last_valid_area
+        
+        # 初回または新しい値が前回の値以上の場合のみ更新
+        if self._last_valid_area is None or new_area >= self._last_valid_area:
+            self._last_valid_area = new_area
+            return new_area
+        else:
+            # 新しい値が前回より小さい場合は無視して前回の値を保持
+            _LOGGER.debug(
+                f"Total Cleaning Area: Ignoring decreased value {new_area}m² "
+                f"(previous: {self._last_valid_area}m²)"
+            )
+            return self._last_valid_area
 
 
 # TODO: Uncomment when time data position is identified in DPS 167 or DPS 168
