@@ -55,10 +55,6 @@ class EufyVacuumConfigFlow(ConfigFlow, domain=DOMAIN):
 class EufyVacuumOptionsFlow(OptionsFlow):
     """Handle options flow for room mappings."""
 
-    def __init__(self, config_entry: ConfigEntry) -> None:
-        """Initialize options flow."""
-        self.config_entry = config_entry
-
     async def async_step_init(self, user_input: dict | None = None) -> data_entry_flow.FlowResult:
         """Manage the options."""
         return await self.async_step_room_mappings()
