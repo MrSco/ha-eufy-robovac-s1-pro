@@ -156,23 +156,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 logger.error("No entity_id provided in service call")
                 return
 
-            # Find and call the vacuum entity for each target
+            # Call the service for each target entity
             for entity_id in target_entity_ids:
-                # Find the vacuum entity in our discovered devices
-                found = False
-                for device_id, props in hass.data[DOMAIN][entry.entry_id][CONF_DISCOVERED_DEVICES].items():
-                    coordinator = props[CONF_COORDINATOR]
-                    # Access the vacuum entity through the coordinator's update listeners
-                    for listener in coordinator.async_update_listeners:
-                        if hasattr(listener, "entity_id") and listener.entity_id == entity_id:
-                            await listener.async_send_command("clean_room", {"room_id": room_id})
-                            found = True
-                            break
-                    if found:
-                        break
-
-                if not found:
-                    logger.error(f"Could not find vacuum entity {entity_id}")
+                # Use hass.services.async_call to call the vacuum's send_command service
+                await hass.services.async_call(
+                    "vacuum",
+                    "send_command",
+                    {
+                        "entity_id": entity_id,
+                        "command": "clean_room",
+                        "params": {"room_id": room_id}
+                    },
+                    blocking=True
+                )
+                logger.info(f"Sent clean_room command to {entity_id} for room '{room_id}'")
 
         # Only register the service once (check if not already registered)
         if not hass.services.has_service(DOMAIN, "clean_room"):
