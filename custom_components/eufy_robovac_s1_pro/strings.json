@@ -1,0 +1,36 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Eufy RoboVac S1 Pro",
+        "description": "Enter your Eufy account credentials",
+        "data": {
+          "username": "Email",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect",
+      "invalid_auth": "Invalid authentication",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "Account already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "room_mappings": {
+        "title": "Room Mappings",
+        "description": "Configure room cleaning mappings. Enter room names and their DPS 173 values in JSON format.\n\nExample:\n```json\n{\n  \"workshop\": \"MAomCgoKBggCGgIILRgBEgwIARICCAK6AQMQy34aBggBEAMoLSABKAESAggBGAQgAw==\",\n  \"closet\": \"NworCgoKBggCGgIILRgBEhEIARICCAK6AQgI0AUQy34YBBoGCAEQAygtIAEoARIECAEQAhgDIAM=\"\n}\n```\n\nTo get DPS 173 values:\n1. Enable debug logging for `custom_components.eufy_robovac_s1_pro`\n2. Use the Eufy app to start cleaning a specific room\n3. Check Home Assistant logs for the DPS 173 value (search for 'DPS 173')\n4. Copy the base64 string and add it here",
+        "data": {
+          "room_mappings_json": "Room Mappings (JSON)"
+        }
+      }
+    },
+    "error": {
+      "room_mappings_json": "Invalid JSON format. Please check your syntax."
+    }
+  }
+}

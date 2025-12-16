@@ -15,7 +15,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_COORDINATOR, CONF_DISCOVERED_DEVICES, DOMAIN
+from .const import CONF_COORDINATOR, CONF_DISCOVERED_DEVICES, CONF_ROOM_MAPPINGS, DOMAIN
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,7 @@ S1_PRO_COMMANDS = {
 class RobovacState(Enum):
     """ロボット掃除機の状態定義"""
     CLEANING = "cleaning"
+    ROOM_CLEANING = "room_cleaning"
     PAUSED = "paused"
     RETURNING = "returning"
     DOCKED = "docked"
@@ -99,26 +100,32 @@ def decode_dps153_to_state(dps153_value: str) -> tuple[RobovacState, str]:
         logger.debug(f"dps153 decoded: {hex_str}")
         
         # ========== 主要な状態判定 ==========
-        
-        # Byte[1]=0x0a, Byte[2]=0x00 のパターン
-        # (Cleaning, Paused, モップ関連Docked)
-        if byte1 == 0x0a and byte2 == 0x00:
+
+        # Byte[1]=0x0a のパターン (Cleaning, Room Cleaning, Paused, モップ関連Docked)
+        if byte1 == 0x0a:
             if len(decoded) >= 5:
                 byte3 = decoded[3]
                 byte4 = decoded[4]
-                
-                # Cleaning/Pausedのパターン
-                if byte3 == 0x10 and byte4 == 0x05:
-                    # Pausedの判定
-                    if len(decoded) >= 7 and decoded[6] == 0x02:
-                        return RobovacState.PAUSED, "paused"
-                    else:
-                        return RobovacState.CLEANING, "cleaning"
-                
-                # モップ関連Dockedのパターン
-                elif byte3 == 0x10 and byte4 == 0x09:
-                    substatus = _get_docked_substatus(decoded)
-                    return RobovacState.DOCKED, substatus
+
+                # Room cleaning pattern: Byte[2]=0x02, Byte[4]=0x01
+                if byte2 == 0x02 and byte4 == 0x01:
+                    if byte3 == 0x08 and len(decoded) >= 7 and decoded[6] == 0x05:
+                        return RobovacState.ROOM_CLEANING, "cleaning"
+
+                # Whole house cleaning pattern: Byte[2]=0x00
+                elif byte2 == 0x00:
+                    # Cleaning/Pausedのパターン
+                    if byte3 == 0x10 and byte4 == 0x05:
+                        # Pausedの判定
+                        if len(decoded) >= 7 and decoded[6] == 0x02:
+                            return RobovacState.PAUSED, "paused"
+                        else:
+                            return RobovacState.CLEANING, "cleaning"
+
+                    # モップ関連Dockedのパターン
+                    elif byte3 == 0x10 and byte4 == 0x09:
+                        substatus = _get_docked_substatus(decoded)
+                        return RobovacState.DOCKED, substatus
         
         # Returning の判定
         if byte1 == 0x10 and byte2 == 0x07:
@@ -219,7 +226,7 @@ async def async_setup_entry(
     logger.debug("Got discovered devices: %s", discovered_devices)
 
     return async_add_devices(
-        [RobovacVacuum(coordinator=props[CONF_COORDINATOR]) for device_id, props in discovered_devices.items()]
+        [RobovacVacuum(coordinator=props[CONF_COORDINATOR], config_entry=config_entry) for device_id, props in discovered_devices.items()]
     )
 
 
@@ -233,10 +240,12 @@ class RobovacVacuum(CoordinatorEntity, StateVacuumEntity):
         | VacuumEntityFeature.START
         | VacuumEntityFeature.STATE
         | VacuumEntityFeature.FAN_SPEED
+        | VacuumEntityFeature.SEND_COMMAND
     )
 
-    def __init__(self, coordinator):
+    def __init__(self, coordinator, config_entry: ConfigEntry):
         super().__init__(coordinator)
+        self._config_entry = config_entry
         self._last_command = None
         self._last_command_time = 0
         self._was_paused = False  # 一時停止状態を記憶
@@ -292,6 +301,9 @@ class RobovacVacuum(CoordinatorEntity, StateVacuumEntity):
             
             # 状態に応じたフラグ更新と値の返却
             if detected_state == RobovacState.CLEANING:
+                self._was_paused = False
+                return VacuumActivity.CLEANING
+            elif detected_state == RobovacState.ROOM_CLEANING:
                 self._was_paused = False
                 return VacuumActivity.CLEANING
             elif detected_state == RobovacState.PAUSED:
@@ -388,22 +400,22 @@ class RobovacVacuum(CoordinatorEntity, StateVacuumEntity):
         """Check if vacuum is actually running based on multiple indicators."""
         if self.coordinator.data:
             dps153 = self.coordinator.data.get("153", "")
-            
+
             # Check DPS 153 first (most reliable)
             if dps153:
                 detected_state, _ = decode_dps153_to_state(dps153)
-                return detected_state == RobovacState.CLEANING
-            
+                return detected_state in [RobovacState.CLEANING, RobovacState.ROOM_CLEANING]
+
             # Fallback to DPS 152 if DPS 153 is not available
             dps152 = self.coordinator.data.get("152", "")
             if dps152 == S1_PRO_COMMANDS["cleaning"] or dps152 == "AggO":
                 return True
-            
+
             # Final fallback to DPS 6/7
             dps6 = self.coordinator.data.get("6", 0)
             dps7 = self.coordinator.data.get("7", 0)
             return (dps6 == 2 and dps7 == 3)
-                
+
         return False
 
     @property
@@ -601,3 +613,69 @@ class RobovacVacuum(CoordinatorEntity, StateVacuumEntity):
             logger.info(f"Fan speed set to {fan_speed}")
         except Exception as e:
             logger.error(f"Failed to set fan speed: {e}")
+
+    async def async_send_command(
+        self, command: str, params: dict[str, Any] | None = None, **kwargs: Any
+    ) -> None:
+        """Send a command to the vacuum cleaner."""
+        if command == "clean_room":
+            await self._handle_clean_room_command(params)
+        else:
+            raise ValueError(f"Unsupported command: {command}")
+
+    async def _handle_clean_room_command(self, params: dict[str, Any] | None) -> None:
+        """Handle room cleaning command."""
+        if not params or "room_id" not in params:
+            raise ValueError("room_id parameter is required")
+
+        room_id = params["room_id"]
+
+        # Get room mappings from config entry options
+        room_dps173_map = self._config_entry.options.get(CONF_ROOM_MAPPINGS, {})
+
+        if not room_dps173_map:
+            raise ValueError(
+                f"No room mappings configured. Please add room mappings by:\n"
+                f"1. Go to Settings -> Devices & Services -> Eufy RoboVac S1 Pro\n"
+                f"2. Click 'Configure' on the integration\n"
+                f"3. Add your room mappings in JSON format\n"
+                f"\n"
+                f"To get DPS 173 values:\n"
+                f"1. Enable debug logging for custom_components.eufy_robovac_s1_pro\n"
+                f"2. Use the Eufy app to start cleaning a specific room\n"
+                f"3. Find the DPS 173 value in Home Assistant logs\n"
+                f"4. Add it to the room mappings configuration"
+            )
+
+        if str(room_id) not in room_dps173_map:
+            available_rooms = ", ".join(room_dps173_map.keys())
+            raise ValueError(
+                f"Room ID '{room_id}' not found in configured rooms. "
+                f"Available rooms: {available_rooms or 'none'}. "
+                f"Please add this room via Settings -> Devices & Services -> "
+                f"Eufy RoboVac S1 Pro -> Configure."
+            )
+
+        dps173_value = room_dps173_map[str(room_id)]
+
+        try:
+            logger.info(f"Starting room cleaning for room '{room_id}'")
+
+            # Step 1: Set DPS 173 (room selection)
+            logger.debug(f"Setting DPS 173 to: {dps173_value}")
+            await self.coordinator.tuya_client.async_set({"173": dps173_value})
+            await asyncio.sleep(0.5)  # Wait for device to process
+
+            # Step 2: Set DPS 152 to start cleaning (same as whole-house)
+            logger.debug("Setting DPS 152 to 'AggB' (start command)")
+            await self.coordinator.tuya_client.async_set({"152": "AggB"})
+
+            # Wait for state to update
+            await asyncio.sleep(1.0)
+            await self.coordinator.async_request_refresh()
+
+            logger.info(f"Room cleaning command sent successfully for room '{room_id}'")
+
+        except Exception as e:
+            logger.error(f"Failed to start room cleaning: {e}")
+            raise

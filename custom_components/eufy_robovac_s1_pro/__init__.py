@@ -8,7 +8,9 @@ from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.helpers import config_validation as cv
+import voluptuous as vol
 
 from .const import CONF_COORDINATOR, CONF_DISCOVERED_DEVICES, DOMAIN, PLATFORMS
 from .coordinators import EufyTuyaDataUpdateCoordinator
@@ -125,6 +127,50 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 except Exception as e:
                     logger.error("Failed to setup platform %s: %s", platform, e)
                     # Continue with other platforms even if one fails
+
+        # Register room cleaning service
+        async def handle_clean_room(call: ServiceCall) -> None:
+            """Handle the clean_room service call."""
+            entity_id = call.data.get("entity_id")
+            room_id = call.data.get("room_id")
+
+            # Get the entity from the entity registry
+            entity_registry = hass.helpers.entity_registry.async_get(hass)
+            entity_entry = entity_registry.async_get(entity_id)
+
+            if not entity_entry:
+                logger.error(f"Entity {entity_id} not found")
+                return
+
+            # Get the state object which has the async_send_command method
+            state = hass.states.get(entity_id)
+            if not state:
+                logger.error(f"Entity {entity_id} has no state")
+                return
+
+            # Find the vacuum entity in our discovered devices
+            for device_id, props in hass.data[DOMAIN][entry.entry_id][CONF_DISCOVERED_DEVICES].items():
+                coordinator = props[CONF_COORDINATOR]
+                # Access the vacuum entity through the coordinator's update listeners
+                for listener in coordinator.async_update_listeners:
+                    if hasattr(listener, "entity_id") and listener.entity_id == entity_id:
+                        await listener.async_send_command("clean_room", {"room_id": room_id})
+                        return
+
+            logger.error(f"Could not find vacuum entity {entity_id}")
+
+        # Only register the service once (check if not already registered)
+        if not hass.services.has_service(DOMAIN, "clean_room"):
+            hass.services.async_register(
+                DOMAIN,
+                "clean_room",
+                handle_clean_room,
+                schema=vol.Schema({
+                    vol.Required("entity_id"): cv.entity_id,
+                    vol.Required("room_id"): cv.string,
+                })
+            )
+            logger.info("Registered clean_room service")
 
         return True
 

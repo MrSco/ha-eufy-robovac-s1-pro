@@ -1,0 +1,15 @@
+clean_room:
+  name: Clean Room
+  description: Start cleaning a specific room
+  target:
+    entity:
+      integration: eufy_robovac_s1_pro
+      domain: vacuum
+  fields:
+    room_id:
+      name: Room ID
+      description: The room identifier (capture from DPS 173 during Eufy app room clean)
+      required: true
+      example: "workshop"
+      selector:
+        text:
