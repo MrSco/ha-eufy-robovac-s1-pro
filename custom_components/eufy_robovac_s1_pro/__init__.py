@@ -182,7 +182,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 handle_clean_room,
                 schema=vol.Schema({
                     vol.Required("room_id"): cv.string,
-                })
+                }, extra=vol.ALLOW_EXTRA)
             )
             logger.info("Registered clean_room service")
 
