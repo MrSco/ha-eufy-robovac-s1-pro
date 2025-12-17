@@ -101,19 +101,19 @@ def decode_dps153_to_state(dps153_value: str) -> tuple[RobovacState, str]:
         
         # ========== 主要な状態判定 ==========
 
-        # Byte[1]=0x0a のパターン (Cleaning, Room Cleaning, Paused, モップ関連Docked)
+        # Room cleaning pattern: Byte[0]=0x06, Byte[1]=0x10, Byte[2]=0x03
+        # Example: 06 10 03 1a 02 08 01
+        if byte0 == 0x06 and byte1 == 0x10 and byte2 == 0x03:
+            return RobovacState.ROOM_CLEANING, "cleaning"
+
+        # Byte[1]=0x0a のパターン (Cleaning, Paused, モップ関連Docked)
         if byte1 == 0x0a:
             if len(decoded) >= 5:
                 byte3 = decoded[3]
                 byte4 = decoded[4]
 
-                # Room cleaning pattern: Byte[2]=0x02, Byte[4]=0x01
-                if byte2 == 0x02 and byte4 == 0x01:
-                    if byte3 == 0x08 and len(decoded) >= 7 and decoded[6] == 0x05:
-                        return RobovacState.ROOM_CLEANING, "cleaning"
-
                 # Whole house cleaning pattern: Byte[2]=0x00
-                elif byte2 == 0x00:
+                if byte2 == 0x00:
                     # Cleaning/Pausedのパターン
                     if byte3 == 0x10 and byte4 == 0x05:
                         # Pausedの判定
