@@ -91,14 +91,15 @@ def decode_dps153_to_state(dps153_value: str) -> tuple[RobovacState, str]:
         if len(decoded) < 3:
             logger.warning(f"dps153 data too short: {len(decoded)} bytes")
             return RobovacState.UNKNOWN, "unknown"
-        
+
+        byte0 = decoded[0]
         byte1 = decoded[1]
         byte2 = decoded[2]
-        
+
         # デバッグログ
         hex_str = ' '.join([f"{b:02x}" for b in decoded])
         logger.debug(f"dps153 decoded: {hex_str}")
-        
+
         # ========== 主要な状態判定 ==========
 
         # Room cleaning pattern: Byte[0]=0x06, Byte[1]=0x10, Byte[2]=0x03
@@ -664,7 +665,16 @@ class RobovacVacuum(CoordinatorEntity, StateVacuumEntity):
             # Step 1: Set DPS 173 (room selection)
             logger.debug(f"Setting DPS 173 to: {dps173_value}")
             await self.coordinator.tuya_client.async_set({"173": dps173_value})
-            await asyncio.sleep(0.5)  # Wait for device to process
+
+            # Wait and verify DPS 173 was set
+            await asyncio.sleep(1.0)
+            await self.coordinator.async_request_refresh()
+
+            current_dps173 = self.coordinator.data.get("173", "")
+            logger.debug(f"Current DPS 173 after set: {current_dps173}")
+
+            if current_dps173 != dps173_value:
+                logger.warning(f"DPS 173 verification failed - expected: {dps173_value}, got: {current_dps173}")
 
             # Step 2: Clear pause state
             self._was_paused = False
@@ -680,11 +690,21 @@ class RobovacVacuum(CoordinatorEntity, StateVacuumEntity):
             logger.debug(f"Sending cleaning command: {S1_PRO_COMMANDS['cleaning']}")
             await self._send_command(S1_PRO_COMMANDS["cleaning"])
 
-            # Final refresh
+            # Final refresh and check state
+            await asyncio.sleep(1.0)
             await self.coordinator.async_request_refresh()
 
+            # Check both running state and DPS 153 pattern
+            dps153 = self.coordinator.data.get("153", "")
+            detected_state, _ = decode_dps153_to_state(dps153) if dps153 else (RobovacState.UNKNOWN, "unknown")
+
+            logger.debug(f"After room clean command - DPS 153: {dps153}, State: {detected_state}")
+
             if self._is_running():
-                logger.info(f"Room cleaning started successfully for room '{room_id}'")
+                if detected_state == RobovacState.ROOM_CLEANING:
+                    logger.info(f"Room cleaning started successfully for room '{room_id}'")
+                else:
+                    logger.warning(f"Vacuum is running but may be doing whole-house clean instead of room clean. State: {detected_state}")
             else:
                 logger.warning(f"Room cleaning may not have started properly for room '{room_id}'")
 
