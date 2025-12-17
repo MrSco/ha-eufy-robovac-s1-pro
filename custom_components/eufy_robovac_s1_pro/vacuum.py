@@ -666,15 +666,27 @@ class RobovacVacuum(CoordinatorEntity, StateVacuumEntity):
             await self.coordinator.tuya_client.async_set({"173": dps173_value})
             await asyncio.sleep(0.5)  # Wait for device to process
 
-            # Step 2: Set DPS 152 to start cleaning (same as whole-house)
-            logger.debug("Setting DPS 152 to 'AggB' (start command)")
-            await self.coordinator.tuya_client.async_set({"152": "AggB"})
+            # Step 2: Clear pause state
+            self._was_paused = False
 
-            # Wait for state to update
-            await asyncio.sleep(1.0)
+            # Step 3: Send start command (same as whole-house cleaning)
+            logger.debug(f"Sending start command: {S1_PRO_COMMANDS['start']}")
+            await self._send_command(S1_PRO_COMMANDS["start"])
+
+            # Wait for state to stabilize
+            await asyncio.sleep(2.0)
+
+            # Step 4: Send cleaning command to confirm
+            logger.debug(f"Sending cleaning command: {S1_PRO_COMMANDS['cleaning']}")
+            await self._send_command(S1_PRO_COMMANDS["cleaning"])
+
+            # Final refresh
             await self.coordinator.async_request_refresh()
 
-            logger.info(f"Room cleaning command sent successfully for room '{room_id}'")
+            if self._is_running():
+                logger.info(f"Room cleaning started successfully for room '{room_id}'")
+            else:
+                logger.warning(f"Room cleaning may not have started properly for room '{room_id}'")
 
         except Exception as e:
             logger.error(f"Failed to start room cleaning: {e}")
