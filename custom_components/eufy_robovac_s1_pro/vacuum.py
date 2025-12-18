@@ -709,11 +709,27 @@ class RobovacVacuum(CoordinatorEntity, StateVacuumEntity):
         try:
             logger.info(f"Starting room cleaning for room '{room_id}' (byte: 0x{target_room_byte:02x})")
 
-            # Step 1: Get current DPS 173 from device
+            # Step 1: Refresh data and get current DPS 173 from device
+            await self.coordinator.async_request_refresh()
+            await asyncio.sleep(0.5)
+
             current_dps173 = self.coordinator.data.get("173", "")
 
             if not current_dps173:
-                raise ValueError("Cannot read current DPS 173 from device. Is the vacuum connected?")
+                # DPS 173 may not be reported when idle - try to query it directly
+                logger.warning("DPS 173 not in coordinator data, attempting direct query")
+                await self.coordinator.tuya_client.async_get()
+                await asyncio.sleep(1.0)
+                await self.coordinator.async_request_refresh()
+                current_dps173 = self.coordinator.data.get("173", "")
+
+                if not current_dps173:
+                    # Use a default DPS 173 base value (from workshop Android log)
+                    # This will be normalized by the device anyway
+                    logger.warning("DPS 173 not available - using default base value")
+                    # Base64 of hex: 300a260a0a0a0608021a02082d1801120c080112020802ba010310cb7e1a0608011003282d200128011202080118032003
+                    current_dps173 = "MAomCgoKBggCGgIILRgBEgwIARICCAK6AQMQy34aBggBEAMoLSABKAESAggBGAMgAw=="
+                    logger.debug(f"Using default DPS 173: {current_dps173}")
 
             logger.debug(f"Current DPS 173: {current_dps173}")
 
