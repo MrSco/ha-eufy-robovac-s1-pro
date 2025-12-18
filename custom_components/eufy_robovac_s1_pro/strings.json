@@ -23,7 +23,7 @@
     "step": {
       "room_mappings": {
         "title": "Room Mappings",
-        "description": "Configure room cleaning mappings. Enter room names and their DPS 173 values in JSON format.\n\nExample:\n```json\n{\n  \"workshop\": \"MAomCgoKBggCGgIILRgBEgwIARICCAK6AQMQy34aBggBEAMoLSABKAESAggBGAQgAw==\",\n  \"closet\": \"NworCgoKBggCGgIILRgBEhEIARICCAK6AQgI0AUQy34YBBoGCAEQAygtIAEoARIECAEQAhgDIAM=\"\n}\n```\n\nTo get DPS 173 values:\n1. Enable debug logging for `custom_components.eufy_robovac_s1_pro`\n2. Use the Eufy app to start cleaning a specific room\n3. Check Home Assistant logs for the DPS 173 value (search for 'DPS 173')\n4. Copy the base64 string and add it here",
+        "description": "Configure room cleaning mappings. Enter room names and their room ID bytes in JSON format.\n\nExample:\n```json\n{\n  \"workshop\": 3,\n  \"master_closet\": 4,\n  \"bedroom\": 5\n}\n```\n\nTo find room ID bytes:\n1. Enable debug logging for `custom_components.eufy_robovac_s1_pro`\n2. Use the Eufy app to start cleaning a specific room\n3. Check Home Assistant logs for 'Original DPS 173 hex'\n4. Look at the 5th byte from the end (e.g., '...18032003' means room ID = 3)\n5. Add the room name and ID byte number here",
         "data": {
           "room_mappings_json": "Room Mappings (JSON)"
         }

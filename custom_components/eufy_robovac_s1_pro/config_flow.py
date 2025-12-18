@@ -81,8 +81,9 @@ class EufyVacuumOptionsFlow(OptionsFlow):
             data_schema=self._get_room_mappings_schema(),
             description_placeholders={
                 "example": json.dumps({
-                    "workshop": "MAomCgoKBggCGgIILRgBEgwIARICCAK6AQMQy34aBggBEAMoLSABKAESAggBGAQgAw==",
-                    "closet": "NworCgoKBggCGgIILRgBEhEIARICCAK6AQgI0AUQy34YBBoGCAEQAygtIAEoARIECAEQAhgDIAM="
+                    "litter_area": 3,
+                    "master_closet": 4,
+                    "bedroom": 5
                 }, indent=2)
             }
         )

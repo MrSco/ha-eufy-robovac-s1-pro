@@ -10,6 +10,6 @@ clean_room:
       name: Room ID
       description: The room identifier (capture from DPS 173 during Eufy app room clean)
       required: true
-      example: "workshop"
+      example: "litter_area"
       selector:
         text:

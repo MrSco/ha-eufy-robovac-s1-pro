@@ -624,6 +624,52 @@ class RobovacVacuum(CoordinatorEntity, StateVacuumEntity):
         else:
             raise ValueError(f"Unsupported command: {command}")
 
+    def _modify_dps173_room_id(self, base_dps173: str, target_room_byte: int) -> str:
+        """
+        Modify the room ID byte in DPS 173.
+
+        Based on Android log analysis:
+        - Litter Area: ...18032003 (byte at position -5 = 0x03)
+        - Master Closet: ...18042003 (byte at position -5 = 0x04)
+
+        Args:
+            base_dps173: Current DPS 173 value in base64
+            target_room_byte: Target room ID byte (e.g., 0x03 for litter area, 0x04 for master closet)
+
+        Returns:
+            Modified DPS 173 value in base64
+        """
+        try:
+            # Decode from base64 to bytes
+            decoded = base64.b64decode(base_dps173)
+            decoded_hex = decoded.hex()
+
+            logger.debug(f"Original DPS 173 hex: {decoded_hex}")
+
+            # The room ID byte is at position -5 from the end (before the final "2003")
+            # Convert to list for modification
+            byte_array = bytearray(decoded)
+
+            # Modify the room ID byte (5th byte from end, or index -5)
+            if len(byte_array) >= 5:
+                original_byte = byte_array[-5]
+                byte_array[-5] = target_room_byte
+                logger.debug(f"Modified room ID byte from 0x{original_byte:02x} to 0x{target_room_byte:02x}")
+            else:
+                logger.warning(f"DPS 173 too short ({len(byte_array)} bytes), cannot modify room ID")
+                return base_dps173
+
+            # Re-encode to base64
+            modified = base64.b64encode(bytes(byte_array)).decode('ascii')
+            modified_hex = byte_array.hex()
+            logger.debug(f"Modified DPS 173 hex: {modified_hex}")
+
+            return modified
+
+        except Exception as e:
+            logger.error(f"Failed to modify DPS 173: {e}")
+            return base_dps173
+
     async def _handle_clean_room_command(self, params: dict[str, Any] | None) -> None:
         """Handle room cleaning command."""
         if not params or "room_id" not in params:
@@ -632,81 +678,85 @@ class RobovacVacuum(CoordinatorEntity, StateVacuumEntity):
         room_id = params["room_id"]
 
         # Get room mappings from config entry options
-        room_dps173_map = self._config_entry.options.get(CONF_ROOM_MAPPINGS, {})
+        # Format: {"litter_area": 3, "master_closet": 4, ...} where values are the room ID bytes
+        room_id_map = self._config_entry.options.get(CONF_ROOM_MAPPINGS, {})
 
-        if not room_dps173_map:
+        if not room_id_map:
             raise ValueError(
                 f"No room mappings configured. Please add room mappings by:\n"
                 f"1. Go to Settings -> Devices & Services -> Eufy RoboVac S1 Pro\n"
                 f"2. Click 'Configure' on the integration\n"
                 f"3. Add your room mappings in JSON format\n"
-                f"\n"
-                f"To get DPS 173 values:\n"
-                f"1. Enable debug logging for custom_components.eufy_robovac_s1_pro\n"
-                f"2. Use the Eufy app to start cleaning a specific room\n"
-                f"3. Find the DPS 173 value in Home Assistant logs\n"
-                f"4. Add it to the room mappings configuration"
+                f"Example:\n"
+                f'{{\n'
+                f'  "litter_area": 3,\n'
+                f'  "master_closet": 4,\n'
+                f'  "bedroom": 5\n'
+                f'}}\n'
+                f"The numbers are room ID bytes (found at position -5 in DPS 173 hex)."
             )
 
-        if str(room_id) not in room_dps173_map:
-            available_rooms = ", ".join(room_dps173_map.keys())
+        if str(room_id) not in room_id_map:
+            available_rooms = ", ".join(room_id_map.keys())
             raise ValueError(
                 f"Room ID '{room_id}' not found in configured rooms. "
                 f"Available rooms: {available_rooms or 'none'}. "
-                f"Please add this room via Settings -> Devices & Services -> "
-                f"Eufy RoboVac S1 Pro -> Configure."
+                f"Please add this room to your room mappings configuration."
             )
 
-        dps173_value = room_dps173_map[str(room_id)]
+        target_room_byte = int(room_id_map[str(room_id)])
 
         try:
-            logger.info(f"Starting room cleaning for room '{room_id}'")
+            logger.info(f"Starting room cleaning for room '{room_id}' (byte: 0x{target_room_byte:02x})")
 
-            # Step 1: Set DPS 173 (room selection)
-            logger.debug(f"Setting DPS 173 to: {dps173_value}")
-            await self.coordinator.tuya_client.async_set({"173": dps173_value})
+            # Step 1: Get current DPS 173 from device
+            current_dps173 = self.coordinator.data.get("173", "")
 
-            # Wait and verify DPS 173 was set
+            if not current_dps173:
+                raise ValueError("Cannot read current DPS 173 from device. Is the vacuum connected?")
+
+            logger.debug(f"Current DPS 173: {current_dps173}")
+
+            # Step 2: Modify DPS 173 to set the target room
+            modified_dps173 = self._modify_dps173_room_id(current_dps173, target_room_byte)
+
+            logger.debug(f"Setting modified DPS 173: {modified_dps173}")
+            await self.coordinator.tuya_client.async_set({"173": modified_dps173})
+
+            # Wait for device to process
             await asyncio.sleep(1.0)
             await self.coordinator.async_request_refresh()
 
-            current_dps173 = self.coordinator.data.get("173", "")
-            logger.debug(f"Current DPS 173 after set: {current_dps173}")
+            # Verify DPS 173 (it may be normalized by device)
+            new_dps173 = self.coordinator.data.get("173", "")
+            logger.debug(f"DPS 173 after set: {new_dps173}")
 
-            if current_dps173 != dps173_value:
-                logger.warning(f"DPS 173 verification failed - expected: {dps173_value}, got: {current_dps173}")
+            if new_dps173 != modified_dps173:
+                logger.info(f"DPS 173 was normalized by device (this is normal)")
 
-            # Step 2: Clear pause state
+            # Step 3: Send DPS 152 = AggB to trigger room cleaning
+            # Based on Android logs: DPS 152 changes to 020801 (AggB) when room clean starts
+            logger.debug("Setting DPS 152 to 'AggB' to start room cleaning")
+            await self.coordinator.tuya_client.async_set({"152": "AggB"})
+
+            # Clear pause state
             self._was_paused = False
 
-            # Step 3: Send start command (same as whole-house cleaning)
-            logger.debug(f"Sending start command: {S1_PRO_COMMANDS['start']}")
-            await self._send_command(S1_PRO_COMMANDS["start"])
-
-            # Wait for state to stabilize
+            # Wait for device to start cleaning
             await asyncio.sleep(2.0)
-
-            # Step 4: Send cleaning command to confirm
-            logger.debug(f"Sending cleaning command: {S1_PRO_COMMANDS['cleaning']}")
-            await self._send_command(S1_PRO_COMMANDS["cleaning"])
-
-            # Final refresh and check state
-            await asyncio.sleep(1.0)
             await self.coordinator.async_request_refresh()
 
-            # Check both running state and DPS 153 pattern
+            # Check state
+            dps152 = self.coordinator.data.get("152", "")
             dps153 = self.coordinator.data.get("153", "")
             detected_state, _ = decode_dps153_to_state(dps153) if dps153 else (RobovacState.UNKNOWN, "unknown")
 
-            logger.debug(f"After room clean command - DPS 153: {dps153}, State: {detected_state}")
+            logger.debug(f"After room clean command - DPS 152: {dps152}, DPS 153: {dps153}, State: {detected_state}")
 
-            if self._is_running():
-                if detected_state == RobovacState.ROOM_CLEANING:
-                    logger.info(f"Room cleaning started successfully for room '{room_id}'")
-                else:
-                    logger.warning(f"Vacuum is running but may be doing whole-house clean instead of room clean. State: {detected_state}")
+            if detected_state in [RobovacState.CLEANING, RobovacState.ROOM_CLEANING]:
+                logger.info(f"Room cleaning started successfully for room '{room_id}' (State: {detected_state})")
             else:
-                logger.warning(f"Room cleaning may not have started properly for room '{room_id}'")
+                logger.warning(f"Room cleaning may not have started - State: {detected_state}")
 
         except Exception as e:
             logger.error(f"Failed to start room cleaning: {e}")
